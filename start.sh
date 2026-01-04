@@ -9,52 +9,36 @@ if [ "$(id -u)" = "0" ]; then
     # Create runtime directories
     mkdir -p /run/dbus
     mkdir -p /run/user/1000
-    mkdir -p /run/systemd/seats
-    mkdir -p /run/systemd/users
-    mkdir -p /run/systemd/sessions
+    mkdir -p /run/elogind
     mkdir -p /tmp/.X11-unix
     
     chmod 1777 /tmp/.X11-unix
     chmod 700 /run/user/1000
     chown nyarch:nyarch /run/user/1000
     
-    # Create fake systemd/logind session info
-    cat > /run/systemd/seats/seat0 << 'EOF'
-ACTIVE_SESSIONS=1
-CAN_MULTI_SESSION=1
-CAN_GRAPHICAL=1
-EOF
-
-    cat > /run/systemd/users/1000 << 'EOF'
-NAME=nyarch
-RUNTIME=/run/user/1000
-STATE=active
-SESSIONS=1
-SEATS=seat0
-ACTIVE_SESSIONS=1
-EOF
-
-    cat > /run/systemd/sessions/1 << 'EOF'
-USER=1000
-NAME=nyarch
-SEAT=seat0
-ACTIVE=1
-IS_DISPLAY=1
-STATE=active
-TYPE=x11
-CLASS=user
-DESKTOP=gnome
-DISPLAY=:1
-EOF
-
-    # Start system dbus
+    # Start system dbus FIRST
     if [ ! -S /run/dbus/system_bus_socket ]; then
         echo "Starting system dbus..."
-        dbus-daemon --system --fork --nopidfile 2>/dev/null || true
-        sleep 1
+        dbus-daemon --system --fork --nopidfile
+        sleep 2
     fi
     
-    # Start system services
+    # Start elogind (provides org.freedesktop.login1)
+    echo "Starting elogind..."
+    /usr/libexec/elogind/elogind &
+    sleep 2
+    
+    # Verify elogind is running
+    if busctl status org.freedesktop.login1 &>/dev/null; then
+        echo "elogind is running!"
+    else
+        echo "WARNING: elogind may not be fully running"
+        # Try alternative path
+        /lib/elogind/elogind &>/dev/null &
+        sleep 2
+    fi
+    
+    # Start other system services
     echo "Starting colord..."
     /usr/libexec/colord &>/dev/null &
     
@@ -67,7 +51,14 @@ EOF
     echo "Starting udisksd..."
     /usr/libexec/udisks2/udisksd &>/dev/null &
     
+    echo "Starting polkitd..."
+    /usr/libexec/polkitd &>/dev/null &
+    
     sleep 2
+    
+    # Register a session with elogind
+    echo "Registering elogind session..."
+    loginctl enable-linger nyarch 2>/dev/null || true
     
     # Switch to nyarch user
     echo "Switching to nyarch user..."
@@ -83,6 +74,7 @@ EOF
         XDG_SESSION_TYPE=x11 \
         XDG_CURRENT_DESKTOP=GNOME \
         XDG_SESSION_DESKTOP=gnome \
+        XDG_SESSION_CLASS=user \
         DESKTOP_SESSION=gnome \
         LIBGL_ALWAYS_SOFTWARE=1 \
         GSK_RENDERER=cairo \
@@ -103,6 +95,7 @@ export XDG_CACHE_HOME=/config/.cache
 export XDG_SESSION_TYPE=x11
 export XDG_CURRENT_DESKTOP=GNOME
 export XDG_SESSION_DESKTOP=gnome
+export XDG_SESSION_CLASS=user
 export DESKTOP_SESSION=gnome
 export LIBGL_ALWAYS_SOFTWARE=1
 export GSK_RENDERER=cairo
@@ -113,7 +106,6 @@ export SHELL=/bin/bash
 rm -f /tmp/.X1-lock /tmp/.X11-unix/X1 2>/dev/null || true
 
 echo "--- STARTING SESSION DBUS ---"
-# Create a fixed path for the session bus so all processes can find it
 DBUS_SOCKET="/run/user/1000/bus"
 rm -f "$DBUS_SOCKET" 2>/dev/null || true
 
@@ -121,7 +113,7 @@ dbus-daemon --session --address="unix:path=$DBUS_SOCKET" --fork --print-pid
 export DBUS_SESSION_BUS_ADDRESS="unix:path=$DBUS_SOCKET"
 echo "Session DBUS: $DBUS_SESSION_BUS_ADDRESS"
 
-# Write the address to a file so other processes can source it
+# Save for other processes
 echo "export DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" > /run/user/1000/dbus-env
 chmod 644 /run/user/1000/dbus-env
 
@@ -196,12 +188,10 @@ if [ -d "/tmp/material-you-colors" ]; then
 fi
 
 echo "--- APPLYING DCONF SETTINGS ---"
-# Basic settings
 dconf write /org/gnome/desktop/interface/color-scheme "'prefer-dark'" 2>/dev/null || true
 dconf write /org/gnome/desktop/interface/gtk-theme "'Adwaita-dark'" 2>/dev/null || true
 dconf write /org/gnome/desktop/wm/preferences/button-layout "'appmenu:minimize,maximize,close'" 2>/dev/null || true
 
-# Load Nyarch dconf
 if [ -d "/tmp/NyarchLinux/Gnome/etc/dconf/db/local.d" ]; then
     cd /tmp/NyarchLinux/Gnome/etc/dconf/db/local.d
     for conf in 02-interface 03-background 04-wmpreferences 06-extensions; do
@@ -224,7 +214,6 @@ Xtigervnc :1 \
 
 VNC_PID=$!
 
-# Wait for X
 echo "Waiting for X server..."
 for i in $(seq 1 30); do
     if xdpyinfo -display :1 >/dev/null 2>&1; then
@@ -241,14 +230,14 @@ fi
 
 echo "--- STARTING GNOME SERVICES ---"
 
-# Start accessibility services (with DBUS address)
+# Start accessibility
 DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" /usr/libexec/at-spi-bus-launcher --launch-immediately &>/dev/null &
 DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" /usr/libexec/at-spi2-registryd &>/dev/null &
 
 # Start gvfs
 DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" /usr/libexec/gvfsd &>/dev/null &
 
-# Start settings daemons - with proper environment
+# Start settings daemons
 echo "Starting GNOME settings daemons..."
 for gsd in /usr/libexec/gsd-*; do
     if [ -x "$gsd" ]; then
@@ -262,38 +251,38 @@ done
 sleep 3
 
 echo "--- STARTING GNOME SHELL ---"
-echo "DBUS address for gnome-shell: $DBUS_SESSION_BUS_ADDRESS"
+echo "DBUS: $DBUS_SESSION_BUS_ADDRESS"
 
-# Start gnome-shell with explicit environment
+# Use gnome-session to properly start the shell
 DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
 DISPLAY=:1 \
 XDG_RUNTIME_DIR=/run/user/1000 \
 XDG_CURRENT_DESKTOP=GNOME \
 XDG_SESSION_TYPE=x11 \
+XDG_SESSION_DESKTOP=gnome \
 LIBGL_ALWAYS_SOFTWARE=1 \
 GSK_RENDERER=cairo \
-gnome-shell --x11 2>&1 &
+gnome-session --session=gnome 2>&1 &
 
 GNOME_PID=$!
 
-sleep 5
+sleep 8
 
 if pgrep -x gnome-shell > /dev/null; then
     echo "GNOME Shell running!"
 else
-    echo "GNOME Shell not detected, trying alternative..."
+    echo "Trying direct gnome-shell..."
     
-    # Try with nested mode
     DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
     DISPLAY=:1 \
-    gnome-shell --x11 --replace 2>&1 &
+    XDG_RUNTIME_DIR=/run/user/1000 \
+    gnome-shell --x11 2>&1 &
     
     sleep 5
 fi
 
-# Final check - if still no gnome-shell, use mutter with nautilus
 if ! pgrep -x gnome-shell > /dev/null; then
-    echo "Starting mutter + nautilus as fallback..."
+    echo "Starting mutter + nautilus fallback..."
     
     DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
     DISPLAY=:1 \
@@ -301,10 +290,14 @@ if ! pgrep -x gnome-shell > /dev/null; then
     
     sleep 2
     
-    # Start nautilus for desktop icons
     DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
     DISPLAY=:1 \
     nautilus --new-window /config &>/dev/null &
+    
+    # Add a panel alternative
+    DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
+    DISPLAY=:1 \
+    gnome-control-center &>/dev/null &
 fi
 
 echo "--- STARTING NOVNC ---"
@@ -322,9 +315,8 @@ echo "  Web Access: port 7860"
 echo "=============================================="
 echo ""
 
-# Keep alive and monitor
+# Monitor loop
 while true; do
-    # Source dbus env
     source /run/user/1000/dbus-env 2>/dev/null || true
     
     if ! kill -0 $VNC_PID 2>/dev/null; then
@@ -335,7 +327,7 @@ while true; do
     fi
     
     if ! pgrep -x gnome-shell > /dev/null && ! pgrep -x mutter > /dev/null; then
-        echo "Restarting GNOME Shell..."
+        echo "Restarting desktop..."
         DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
         DISPLAY=:1 \
         gnome-shell --x11 2>&1 &
