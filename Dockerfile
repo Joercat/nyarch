@@ -12,7 +12,7 @@ ENV XDG_CURRENT_DESKTOP=GNOME
 ENV LIBGL_ALWAYS_SOFTWARE=1
 ENV NO_AT_BRIDGE=1
 
-# Install packages
+# Install packages - Fixed for Debian 13 (Trixie)
 RUN apt-get update && apt-get install -y \
     gnome-session \
     gnome-shell \
@@ -32,15 +32,14 @@ RUN apt-get update && apt-get install -y \
     xfonts-base \
     x11-xserver-utils \
     x11-utils \
-    adwaita-icon-theme-full \
+    adwaita-icon-theme \
     gnome-backgrounds \
     firefox-esr \
     kitty \
     sudo \
     mesa-utils \
-    libgl1-mesa-dri \
-    libgl1-mesa-glx \
-    libegl1-mesa \
+    libgl1 \
+    libegl1 \
     xauth \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
