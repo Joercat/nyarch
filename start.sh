@@ -1,105 +1,62 @@
 #!/bin/bash
+export DISPLAY=:1
+export HOME=/config
+export XDG_CONFIG_HOME=/config/.config
+export XDG_DATA_HOME=/config/.local/share
 
-# 1. RUNTIME STABILITY
-export XDG_RUNTIME_DIR=/tmp/runtime-abc
-mkdir -p $XDG_RUNTIME_DIR
-chmod 700 $XDG_RUNTIME_DIR
-rm -rf /tmp/.X1-lock /tmp/.X11-unix/X1
+# --- 1. START VNC ---
+vncserver $DISPLAY -geometry 1280x720 -depth 24 -SecurityTypes None -localhost no &
+/usr/share/novnc/utils/novnc_proxy --vnc localhost:5901 --listen 7860 &
 
-# 2. VNC BOOTSTRAP
-echo '#!/bin/sh
-export XDG_CURRENT_DESKTOP=GNOME
-export LIBGL_ALWAYS_SOFTWARE=1
-dbus-run-session -- gnome-session' > /config/xstartup
-chmod +x /config/xstartup
+echo "--- STARTING AUTHENTIC NYARCH INSTALLATION ---"
 
-# Launch VNC without password
-tigervncserver :1 -geometry 1280x720 -depth 24 -xstartup /config/xstartup -SecurityTypes None -localhost no
-websockify --web /usr/share/novnc 7860 localhost:5901 &
+# --- 2. DEFINE NYARCH VARIABLES ---
+LATEST_TAG_VERSION=`curl -s https://api.github.com/repos/NyarchLinux/NyarchLinux/releases/latest | grep "tag_name" | awk -F'"' '/tag_name/ {print $4}'`
+RELEASE_LINK="https://github.com/NyarchLinux/NyarchLinux/releases/download/$LATEST_TAG_VERSION/"
+TAG_PATH="https://raw.githubusercontent.com/NyarchLinux/NyarchLinux/refs/tags/$LATEST_TAG_VERSION/Gnome/"
 
-# 3. FULL NYARCH INSTALLATION SEQUENCE
-(
-    echo "Applying Full Nyarch Suite..."
-    sleep 45 # Wait for GNOME session to be ready for dconf
-    
-    LATEST_TAG=$(curl -s https://api.github.com/repos/NyarchLinux/NyarchLinux/releases/latest | grep "tag_name" | awk -F'"' '/tag_name/ {print $4}')
-    RELEASE_URL="https://github.com/NyarchLinux/NyarchLinux/releases/download/$LATEST_TAG"
-    RAW_REPO="https://raw.githubusercontent.com/NyarchLinux/NyarchLinux/refs/tags/$LATEST_TAG/Gnome"
+# --- 3. CORE FUNCTIONS (Automated from your script) ---
 
-    # A. FETCH ASSETS
-    cd /tmp
-    wget -q "${RELEASE_URL}/NyarchLinux.tar.gz" && tar -xf NyarchLinux.tar.gz
-    wget -q "${RELEASE_URL}/wallpaper.tar.gz" && tar -xf wallpaper.tar.gz
-    wget -q "${RELEASE_URL}/icons.tar.gz" && tar -xf icons.tar.gz
+# Get Tarball
+wget -q -O /tmp/NyarchLinux.tar.gz "${RELEASE_LINK}NyarchLinux.tar.gz"
+cd /tmp && tar -xf NyarchLinux.tar.gz
 
-    # B. INSTALL THEMES & ICONS
-    mkdir -p $HOME/.local/share/icons $HOME/.local/share/themes $HOME/.config
-    cp -rf /tmp/Tela-circle-MaterialYou $HOME/.local/share/icons/
-    cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.local/share/themes/* $HOME/.local/share/themes/
-    cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.config/nyarch $HOME/.config/
-    cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.config/gtk-3.0 $HOME/.config/
-    cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.config/gtk-4.0 $HOME/.config/
-    
-    # C. EXTENSIONS & MATERIAL YOU ENGINE
-    mkdir -p $HOME/.local/share/gnome-shell/extensions
-    cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.local/share/gnome-shell/extensions/* $HOME/.local/share/gnome-shell/extensions/
-    
-    git clone https://github.com/FrancescoCaracciolo/material-you-colors.git /tmp/myc
-    cd /tmp/myc && make build && make install
-    npm install --prefix $HOME/.local/share/gnome-shell/extensions/material-you-colors@francescocaracciolo.github.io
+# Install Extensions & Material You
+mkdir -p /config/.local/share/gnome-shell/extensions
+cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.local/share/gnome-shell/extensions/* /config/.local/share/gnome-shell/extensions/
+cd /tmp && git clone https://github.com/FrancescoCaracciolo/material-you-colors.git
+cd material-you-colors && make build
+npm install --prefix /config/.local/share/gnome-shell/extensions/material-you-colors@francescocaracciolo.github.io
+# Icons & Themes
+mkdir -p /config/.local/share/icons /config/.local/share/themes
+wget -q -O /tmp/icons.tar.gz "${RELEASE_LINK}icons.tar.gz"
+cd /tmp && tar -xf icons.tar.gz && cp -rf Tela-circle-MaterialYou /config/.local/share/icons/
+cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.local/share/themes/* /config/.local/share/themes/
 
-    # D. NYAOFETCH & BINARIES
-    sudo wget -q -O /usr/local/bin/nekofetch "${RAW_REPO}/usr/local/bin/nekofetch"
-    sudo wget -q -O /usr/local/bin/nyaofetch "${RAW_REPO}/usr/local/bin/nyaofetch"
-    sudo chmod +x /usr/local/bin/nekofetch /usr/local/bin/nyaofetch
+# Wallpapers
+cd /tmp && wget -q "${RELEASE_LINK}wallpaper.tar.gz" && tar -xf wallpaper.tar.gz
+cd wallpaper && bash install.sh # Runs the Nyarch wallpaper installer
 
-    # E. KITTY CONFIG
-    mkdir -p $HOME/.config/kitty
-    wget -q -O $HOME/.config/kitty/kitty.conf "${RAW_REPO}/etc/skel/.config/kitty/kitty.conf"
+# Nyarch Exclusive Apps (Flatpak Bundles)
+echo "Installing Nyarch Exclusive Bundles..."
+for app in catgirldownloader wizard nyarchtour nyarchcustomize nyarchscript waifudownloader nyarchassistant; do
+    wget -q -O "/tmp/$app.flatpak" "https://github.com/nyarchlinux/$app/releases/latest/download/$app.flatpak" || \
+    wget -q -O "/tmp/$app.flatpak" "https://github.com/nyarchlinux/$app/releases/latest/download/$(echo $app | sed 's/nyarch//').flatpak"
+    flatpak install --user -y "/tmp/$app.flatpak" 2>/dev/null
+done
 
-    # F. APPLY DCONF (THE LOOK)
-    cd /tmp/NyarchLinux/Gnome/etc/dconf/db/local.d
-    dconf load / < 06-extensions
-    dconf load / < 02-interface
-    dconf load / < 04-wmpreferences
-    dconf load / < 03-background
+# Suggested Flatpaks
+flatpak install --user -y flathub info.febvre.Komikku com.github.tchx84.Flatseal de.haeckerfelix.Shortwave org.gnome.Lollypop
 
-    # G. FLATPAK APPS
-    for app in nyarchwizard nyarchtour nyarchcustomize nyarchscript; do
-        wget -q "https://github.com/nyarchlinux/$app/releases/latest/download/${app}.flatpak"
-        flatpak install --user -y ./${app}.flatpak && rm ./${app}.flatpak
-    done
+# Final GSettings / Dconf Load
+echo "Applying Nyarch GSettings..."
+cd /tmp/NyarchLinux/Gnome/etc/dconf/db/local.d
+for setting in 06-extensions 02-interface 04-wmpreferences 03-background; do
+    dconf load / < "$setting" 2>/dev/null
+done
 
-    echo "--- FULL NYARCH INSTALLATION COMPLETE ---"
-) &
-
-tail -f /config/display.log 2>/dev/null || tail -f /dev/null
-    cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.config/nyarch $HOME/.config/
-    cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.config/gtk-4.0 $HOME/.config/
-
-    # C. MATERIAL YOU ENGINE (NYARCH CORE)
-    git clone https://github.com/FrancescoCaracciolo/material-you-colors.git /tmp/myc
-    cd /tmp/myc && make build && make install
-    npm install --prefix $HOME/.local/share/gnome-shell/extensions/material-you-colors@francescocaracciolo.github.io
-
-    # D. NYAOFETCH & UTILS
-    sudo wget -q -O /usr/local/bin/nyaofetch "${RAW_REPO}/usr/local/bin/nyaofetch"
-    sudo chmod +x /usr/local/bin/nyaofetch
-
-    # E. APPLY DCONF SETTINGS (The "Look")
-    cd /tmp/NyarchLinux/Gnome/etc/dconf/db/local.d
-    dconf load / < 06-extensions
-    dconf load / < 02-interface
-    dconf load / < 03-background
-
-    # F. FLATPAK APPS (NYARCH EXCLUSIVES)
-    # Using --user to avoid sudo permission issues in container
-    for app in nyarchwizard nyarchtour nyarchcustomize nyarchscript; do
-        wget -q "https://github.com/nyarchlinux/$app/releases/latest/download/${app}.flatpak"
-        flatpak install --user -y ./${app}.flatpak && rm ./${app}.flatpak
-    done
-
-    echo "--- NYARCH INITIALIZATION COMPLETE ---"
-) &
-
-tail -f /config/.vnc/*.log
+# --- 4. FINALIZE ---
+chmod -R 755 /config/.config /config/.local
+cd /config
+echo "--- NYARCH SUITE FULLY APPLIED ---"
+wait
