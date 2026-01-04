@@ -3,7 +3,7 @@ FROM debian:13
 ENV DEBIAN_FRONTEND=noninteractive
 ENV HOME=/config
 ENV DISPLAY=:1
-ENV XDG_RUNTIME_DIR=/tmp/runtime-nyarch
+ENV XDG_RUNTIME_DIR=/run/user/1000
 ENV XDG_CONFIG_HOME=/config/.config
 ENV XDG_DATA_HOME=/config/.local/share
 ENV XDG_CACHE_HOME=/config/.cache
@@ -57,10 +57,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     npm \
     gettext \
     ca-certificates \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
-# Stage 4: GNOME services - Fixed for Debian 13
+# Stage 4: GNOME services + elogind
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    elogind \
+    libpam-elogind \
     colord \
     polkitd \
     at-spi2-core \
@@ -99,17 +102,10 @@ RUN mkdir -p /config/.config/dconf \
     /tmp/.X11-unix \
     /run/user/1000 \
     /run/dbus \
-    /run/systemd/seats \
-    /run/systemd/users \
-    /run/systemd/sessions \
+    /run/elogind \
     && chmod 1777 /tmp/.X11-unix \
     && chmod 700 /run/user/1000 \
     && chown -R nyarch:nyarch /config /run/user/1000
-
-# Create fake systemd session files
-RUN echo -e "ACTIVE_SESSIONS=1\nCAN_GRAPHICAL=1" > /run/systemd/seats/seat0 && \
-    echo -e "NAME=nyarch\nSTATE=active\nSESSIONS=1" > /run/systemd/users/1000 && \
-    echo -e "USER=1000\nSEAT=seat0\nACTIVE=1\nTYPE=x11\nDESKTOP=gnome\nDISPLAY=:1" > /run/systemd/sessions/1
 
 COPY start.sh /usr/local/bin/start.sh
 RUN chmod +x /usr/local/bin/start.sh
