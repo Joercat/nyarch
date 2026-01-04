@@ -2,6 +2,11 @@ name: Build and Push Nyarch Image
 on:
   push:
     branches: [ main ]
+    
+permissions:
+  contents: write
+  packages: write
+  
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
