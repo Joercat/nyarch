@@ -15,7 +15,14 @@ ENV LIBGL_ALWAYS_SOFTWARE=1
 ENV NO_AT_BRIDGE=1
 ENV GSK_RENDERER=cairo
 
-# Stage 1: Core GNOME
+# Stage 1: Install elogind FIRST before anything else
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    elogind \
+    dbus \
+    dbus-x11 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Stage 2: Core GNOME (will use elogind)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gnome-session \
     gnome-shell \
@@ -29,7 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gjs \
     && rm -rf /var/lib/apt/lists/*
 
-# Stage 2: VNC and display
+# Stage 3: VNC and display
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tigervnc-standalone-server \
     novnc \
@@ -40,13 +47,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xauth \
     && rm -rf /var/lib/apt/lists/*
 
-# Stage 3: Utilities
+# Stage 4: Utilities
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     wget \
     dconf-cli \
-    dbus-x11 \
     dbus-user-session \
     sudo \
     mesa-utils \
@@ -60,23 +66,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     && rm -rf /var/lib/apt/lists/*
 
-# Stage 4: GNOME services + elogind
+# Stage 5: GNOME services (minimal - avoid conflicts)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    elogind \
-    libpam-elogind \
-    colord \
-    polkitd \
     at-spi2-core \
-    accountsservice \
-    udisks2 \
-    upower \
     gvfs \
     gvfs-daemons \
     gnome-keyring \
     libsecret-1-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Stage 5: Apps and themes
+# Stage 6: Optional services (may fail, that's ok)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    colord \
+    polkitd \
+    accountsservice \
+    upower \
+    udisks2 \
+    || true \
+    && rm -rf /var/lib/apt/lists/*
+
+# Stage 7: Apps and themes
 RUN apt-get update && apt-get install -y --no-install-recommends \
     adwaita-icon-theme \
     gnome-backgrounds \
