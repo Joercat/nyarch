@@ -1,46 +1,26 @@
 FROM debian:trixie
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    PUID=1000 PGID=1000 HOME=/config \
-    DISPLAY=:1 LIBGL_ALWAYS_SOFTWARE=1
+# Install system dependencies required by the Nyarch script
+RUN apt-get update && apt-get install -y \
+    gnome-core tigervnc-standalone-server novnc python3-pip \
+    python3-websockify git make nodejs npm curl wget dconf-cli \
+    gettext libglib2.0-dev-bin flatpak kitty firefox-esr sudo \
+    awk grep && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install System Core + Build Essentials + Desktop + Node
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    sudo wget curl git procps build-essential libglib2.0-dev \
-    python3-full python3-pip python3-dev nodejs npm \
-    tigervnc-standalone-server tigervnc-common novnc websockify \
-    gnome-core gnome-shell-extensions dbus-x11 xauth x11-xserver-utils \
-    dconf-cli unzip fastfetch kitty imagemagick \
-    flatpak mesa-utils libgl1-mesa-dri ca-certificates \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+# Pre-setup the Flatpak environment (needed for the 'install_flatpaks' section)
+RUN flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 
-# Pre-setup Flatpak & Pywal
-RUN pip3 install pywal --break-system-packages --no-cache-dir && \
-    flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-
-# Setup User 'abc'
-RUN groupadd -g 1000 abc && \
-    useradd -u 1000 -g abc -d /config -m -s /bin/bash abc && \
-    echo "abc ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
-
-# Ensure config directories exist
-RUN mkdir -p /config/.local/share/icons /config/.local/share/themes /config/.config/nyarch
-
-COPY start.sh /usr/local/bin/start.sh
-RUN chmod +x /usr/local/bin/start.sh
-
-# Ensure the config directory exists and is writable by anyone
+# Create the user config area
 RUN mkdir -p /config/.config /config/.local/share && \
     chmod -R 777 /config && \
     chown -R 1000:1000 /config
 
-# Fix for the missing Nyarch files
-# Make sure your assets are actually moved to a permanent spot, not just /tmp
-RUN mkdir -p /usr/share/nyarch-assets && \
-    cp -r /tmp/NyarchLinux/* /usr/share/nyarch-assets/ || true
+COPY start.sh /usr/local/bin/start.sh
+RUN chmod +x /usr/local/bin/start.sh
 
-USER abc
+USER 1000
+ENV HOME=/config
 WORKDIR /config
-EXPOSE 7860
 
-CMD ["/usr/local/bin/start.sh"]
+ENTRYPOINT ["/usr/local/bin/start.sh"]
