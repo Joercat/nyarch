@@ -7,7 +7,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     DISPLAY=:1 \
     LIBGL_ALWAYS_SOFTWARE=1
 
-# Install System Core + Build Essentials + Desktop
+# Install everything in ONE block so the binaries are guaranteed to be there
 RUN apt-get update && apt-get install -y --no-install-recommends \
     sudo wget curl git procps build-essential libglib2.0-dev \
     python3-full python3-pip python3-dev nodejs npm \
@@ -17,16 +17,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     flatpak mesa-utils libgl1-mesa-dri ca-certificates \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Pre-setup Flatpak & Pywal
-RUN pip3 install pywal --break-system-packages --no-cache-dir && \
-    flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-
-# Setup User 'abc'
+# Setup User first
 RUN groupadd -g 1000 abc && \
     useradd -u 1000 -g abc -d /config -m -s /bin/bash abc && \
     echo "abc ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
-# VNC and Nyarch Config Directories
+# Now run the VNC setup as the root user during build
 RUN mkdir -p /config/.vnc /config/.local/share/icons /config/.local/share/themes /config/.config/nyarch && \
     echo "nyarch" | vncpasswd -f > /config/.vnc/passwd && \
     chmod 600 /config/.vnc/passwd && \
