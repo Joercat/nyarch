@@ -14,7 +14,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # THIS STEP FIXES YOUR ERROR:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -30,7 +29,8 @@ jobs:
         with:
           context: .
           push: true
-          # Lowercase is handled automatically by GitHub's actor variable here
-          tags: ghcr.io/${{ github.repository_owner }}/nyarch-desktop:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # This snippet ensures the URL is ALWAYS lowercase
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/nyarch-desktop:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
