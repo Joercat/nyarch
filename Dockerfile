@@ -1,26 +1,27 @@
-FROM debian:13
+FROM archlinux:latest
 
-ENV DEBIAN_FRONTEND=noninteractive
+# 1. Install System Dependencies
+RUN pacman -Syu --noconfirm && \
+    pacman -S --noconfirm gnome gnome-extra tigervnc novnc python-websockify \
+    git base-devel sudo xorg-server-xvfb mesa-utils npm
 
-RUN apt-get update && apt-get install -y \
-    gnome-session gnome-settings-daemon gnome-terminal nautilus \
-    tigervnc-standalone-server novnc python3-websockify \
-    git make nodejs npm curl wget dconf-cli gettext libglib2.0-dev-bin \
-    flatpak kitty firefox-esr sudo gawk dbus-x11 libnss-wrapper \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+# 2. Setup User (UID 1000 is standard for most cloud containers)
+RUN useradd -m -u 1000 archuser && \
+    echo "archuser ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
 
-# Pre-setup the folder structure
-RUN mkdir -p /config/.config /config/.local/share /config/.vnc && \
-    chmod -R 777 /config
+# 3. Pre-cloning Nyarch assets to avoid "cannot stat" errors
+WORKDIR /tmp
+RUN git clone https://github.com/NyarchLinux/Nyarcher.git NyarchLinux
 
-COPY start.sh /usr/local/bin/start.sh
-RUN chmod +x /usr/local/bin/start.sh
+USER archuser
+WORKDIR /home/archuser
 
-# This is critical for VNC to know 'who you are'
-RUN echo "nyarch:x:1000:1000:Nyarch,,,:/config:/bin/bash" > /tmp/passwd.template
+# 4. Environment Variables for GNOME and VNC
+ENV DISPLAY=:1
+ENV LIBGL_ALWAYS_SOFTWARE=1
+ENV XDG_RUNTIME_DIR=/tmp/runtime-archuser
 
-USER 1000
-ENV HOME=/config
-WORKDIR /config
+COPY --chown=archuser:archuser start.sh /home/archuser/start.sh
+RUN chmod +x /home/archuser/start.sh
 
-ENTRYPOINT ["/usr/local/bin/start.sh"]
+CMD ["/home/archuser/start.sh"]
