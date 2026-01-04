@@ -29,6 +29,16 @@ RUN mkdir -p /config/.local/share/icons /config/.local/share/themes /config/.con
 COPY start.sh /usr/local/bin/start.sh
 RUN chmod +x /usr/local/bin/start.sh
 
+# Ensure the config directory exists and is writable by anyone
+RUN mkdir -p /config/.config /config/.local/share && \
+    chmod -R 777 /config && \
+    chown -R 1000:1000 /config
+
+# Fix for the missing Nyarch files
+# Make sure your assets are actually moved to a permanent spot, not just /tmp
+RUN mkdir -p /usr/share/nyarch-assets && \
+    cp -r /tmp/NyarchLinux/* /usr/share/nyarch-assets/ || true
+
 USER abc
 WORKDIR /config
 EXPOSE 7860
