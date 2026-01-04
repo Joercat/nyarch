@@ -113,9 +113,17 @@ export SHELL=/bin/bash
 rm -f /tmp/.X1-lock /tmp/.X11-unix/X1 2>/dev/null || true
 
 echo "--- STARTING SESSION DBUS ---"
-eval $(dbus-launch --sh-syntax --exit-with-session)
-export DBUS_SESSION_BUS_ADDRESS
+# Create a fixed path for the session bus so all processes can find it
+DBUS_SOCKET="/run/user/1000/bus"
+rm -f "$DBUS_SOCKET" 2>/dev/null || true
+
+dbus-daemon --session --address="unix:path=$DBUS_SOCKET" --fork --print-pid
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$DBUS_SOCKET"
 echo "Session DBUS: $DBUS_SESSION_BUS_ADDRESS"
+
+# Write the address to a file so other processes can source it
+echo "export DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" > /run/user/1000/dbus-env
+chmod 644 /run/user/1000/dbus-env
 
 echo "--- STARTING GNOME KEYRING ---"
 eval $(gnome-keyring-daemon --start --components=secrets,ssh,pkcs11 2>/dev/null) || true
@@ -233,22 +241,39 @@ fi
 
 echo "--- STARTING GNOME SERVICES ---"
 
-# Start accessibility services
-/usr/libexec/at-spi-bus-launcher --launch-immediately &>/dev/null &
-/usr/libexec/at-spi2-registryd &>/dev/null &
+# Start accessibility services (with DBUS address)
+DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" /usr/libexec/at-spi-bus-launcher --launch-immediately &>/dev/null &
+DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" /usr/libexec/at-spi2-registryd &>/dev/null &
 
 # Start gvfs
-/usr/libexec/gvfsd &>/dev/null &
+DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" /usr/libexec/gvfsd &>/dev/null &
 
-# Start settings daemons
+# Start settings daemons - with proper environment
+echo "Starting GNOME settings daemons..."
 for gsd in /usr/libexec/gsd-*; do
-    [ -x "$gsd" ] && "$gsd" &>/dev/null &
+    if [ -x "$gsd" ]; then
+        DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
+        DISPLAY=:1 \
+        XDG_CURRENT_DESKTOP=GNOME \
+        "$gsd" &>/dev/null &
+    fi
 done
 
-sleep 2
+sleep 3
 
 echo "--- STARTING GNOME SHELL ---"
+echo "DBUS address for gnome-shell: $DBUS_SESSION_BUS_ADDRESS"
+
+# Start gnome-shell with explicit environment
+DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
+DISPLAY=:1 \
+XDG_RUNTIME_DIR=/run/user/1000 \
+XDG_CURRENT_DESKTOP=GNOME \
+XDG_SESSION_TYPE=x11 \
+LIBGL_ALWAYS_SOFTWARE=1 \
+GSK_RENDERER=cairo \
 gnome-shell --x11 2>&1 &
+
 GNOME_PID=$!
 
 sleep 5
@@ -256,14 +281,30 @@ sleep 5
 if pgrep -x gnome-shell > /dev/null; then
     echo "GNOME Shell running!"
 else
-    echo "Trying gnome-shell with --mode=gdm..."
-    gnome-shell --x11 --mode=gdm 2>&1 &
+    echo "GNOME Shell not detected, trying alternative..."
+    
+    # Try with nested mode
+    DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
+    DISPLAY=:1 \
+    gnome-shell --x11 --replace 2>&1 &
+    
     sleep 5
 fi
 
+# Final check - if still no gnome-shell, use mutter with nautilus
 if ! pgrep -x gnome-shell > /dev/null; then
-    echo "Falling back to mutter..."
+    echo "Starting mutter + nautilus as fallback..."
+    
+    DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
+    DISPLAY=:1 \
     mutter --x11 --replace 2>&1 &
+    
+    sleep 2
+    
+    # Start nautilus for desktop icons
+    DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
+    DISPLAY=:1 \
+    nautilus --new-window /config &>/dev/null &
 fi
 
 echo "--- STARTING NOVNC ---"
@@ -275,6 +316,7 @@ echo ""
 echo "=============================================="
 echo "  NYARCH LINUX READY"
 echo "  GNOME: $GNOME_VER"
+echo "  DBUS: $DBUS_SESSION_BUS_ADDRESS"
 echo "=============================================="
 echo "  Web Access: port 7860"
 echo "=============================================="
@@ -282,6 +324,9 @@ echo ""
 
 # Keep alive and monitor
 while true; do
+    # Source dbus env
+    source /run/user/1000/dbus-env 2>/dev/null || true
+    
     if ! kill -0 $VNC_PID 2>/dev/null; then
         echo "Restarting VNC..."
         Xtigervnc :1 -geometry 1280x720 -depth 24 -SecurityTypes None -desktop "Nyarch" -ac -pn -rfbport 5901 -AlwaysShared 2>&1 &
@@ -291,6 +336,8 @@ while true; do
     
     if ! pgrep -x gnome-shell > /dev/null && ! pgrep -x mutter > /dev/null; then
         echo "Restarting GNOME Shell..."
+        DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
+        DISPLAY=:1 \
         gnome-shell --x11 2>&1 &
         sleep 5
     fi
