@@ -15,14 +15,15 @@ ENV LIBGL_ALWAYS_SOFTWARE=1
 ENV NO_AT_BRIDGE=1
 ENV GSK_RENDERER=cairo
 
-# Stage 1: Install elogind FIRST before anything else
+# Stage 1: Install elogind and dbus FIRST
 RUN apt-get update && apt-get install -y --no-install-recommends \
     elogind \
+    libpam-elogind \
     dbus \
     dbus-x11 \
     && rm -rf /var/lib/apt/lists/*
 
-# Stage 2: Core GNOME (will use elogind)
+# Stage 2: Core GNOME
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gnome-session \
     gnome-shell \
@@ -66,32 +67,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     && rm -rf /var/lib/apt/lists/*
 
-# Stage 5: GNOME services (minimal - avoid conflicts)
+# Stage 5: GNOME services
 RUN apt-get update && apt-get install -y --no-install-recommends \
     at-spi2-core \
     gvfs \
     gvfs-daemons \
     gnome-keyring \
     libsecret-1-0 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Stage 6: Optional services (may fail, that's ok)
-RUN apt-get update && apt-get install -y --no-install-recommends \
     colord \
     polkitd \
     accountsservice \
     upower \
-    udisks2 \
-    || true \
-    && rm -rf /var/lib/apt/lists/*
+    || true && rm -rf /var/lib/apt/lists/*
 
-# Stage 7: Apps and themes
+# Stage 6: Apps and themes
 RUN apt-get update && apt-get install -y --no-install-recommends \
     adwaita-icon-theme \
     gnome-backgrounds \
     firefox-esr \
     kitty \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Find and save elogind path
+RUN ELOGIND_PATH=$(find /usr /lib -name "elogind" -type f -executable 2>/dev/null | head -1) && \
+    echo "ELOGIND_PATH=$ELOGIND_PATH" > /etc/elogind-path && \
+    echo "Found elogind at: $ELOGIND_PATH"
 
 # Create user
 RUN useradd -m -u 1000 -d /config -s /bin/bash nyarch && \
