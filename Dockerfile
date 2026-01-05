@@ -22,9 +22,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dbus-x11 \
     && rm -rf /var/lib/apt/lists/*
 
-# Find and store elogind path
-RUN find / -name "elogind" -executable -type f 2>/dev/null | head -1 > /etc/elogind.path && \
-    cat /etc/elogind.path
+# Debug: find all elogind executables and the init script content
+RUN echo "=== ALL ELOGIND FILES ===" && \
+    dpkg -L elogind && \
+    echo "=== INIT SCRIPT ===" && \
+    cat /etc/init.d/elogind | head -50 && \
+    echo "=== WHICH ===" && \
+    which elogind || true && \
+    ls -la /usr/sbin/elogind* 2>/dev/null || true && \
+    ls -la /sbin/elogind* 2>/dev/null || true
 
 # Stage 2: Core GNOME
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -120,4 +126,5 @@ RUN chmod +x /usr/local/bin/start.sh
 
 WORKDIR /config
 EXPOSE 7860
+
 ENTRYPOINT ["/usr/local/bin/start.sh"]
