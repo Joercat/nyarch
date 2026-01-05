@@ -11,8 +11,10 @@ if [ "$(id -u)" = "0" ]; then
     mkdir -p /run/user/1000
     mkdir -p /run/elogind
     mkdir -p /tmp/.X11-unix
+    mkdir -p /tmp/.ICE-unix
     
     chmod 1777 /tmp/.X11-unix
+    chmod 1777 /tmp/.ICE-unix
     chmod 700 /run/user/1000
     chown nyarch:nyarch /run/user/1000
     
@@ -23,42 +25,60 @@ if [ "$(id -u)" = "0" ]; then
         sleep 2
     fi
     
-    # Start elogind (provides org.freedesktop.login1)
+    # Find and start elogind
     echo "Starting elogind..."
-    /usr/libexec/elogind/elogind &
-    sleep 2
     
-    # Verify elogind is running
-    if busctl status org.freedesktop.login1 &>/dev/null; then
-        echo "elogind is running!"
+    # Source saved path if exists
+    [ -f /etc/elogind-path ] && source /etc/elogind-path
+    
+    # Try multiple possible locations
+    ELOGIND_PATHS=(
+        "$ELOGIND_PATH"
+        "/usr/lib/elogind/elogind"
+        "/lib/elogind/elogind"
+        "/usr/libexec/elogind/elogind"
+        "/usr/sbin/elogind"
+    )
+    
+    ELOGIND_STARTED=false
+    for path in "${ELOGIND_PATHS[@]}"; do
+        if [ -x "$path" ]; then
+            echo "Found elogind at: $path"
+            "$path" --daemon &
+            ELOGIND_STARTED=true
+            break
+        fi
+    done
+    
+    if [ "$ELOGIND_STARTED" = false ]; then
+        echo "WARNING: Could not find elogind binary"
+        echo "Searching..."
+        find /usr /lib -name "elogind" -type f 2>/dev/null
+    fi
+    
+    sleep 3
+    
+    # Verify elogind is providing login1
+    if busctl --system list 2>/dev/null | grep -q "org.freedesktop.login1"; then
+        echo "elogind is running and providing login1!"
     else
-        echo "WARNING: elogind may not be fully running"
-        # Try alternative path
-        /lib/elogind/elogind &>/dev/null &
-        sleep 2
+        echo "WARNING: login1 service not available"
+        echo "Available services:"
+        busctl --system list 2>/dev/null | head -20
     fi
     
     # Start other system services
-    echo "Starting colord..."
-    /usr/libexec/colord &>/dev/null &
-    
-    echo "Starting accounts-daemon..."
-    /usr/libexec/accounts-daemon &>/dev/null &
-    
-    echo "Starting upowerd..."
-    /usr/libexec/upowerd &>/dev/null &
-    
-    echo "Starting udisksd..."
-    /usr/libexec/udisks2/udisksd &>/dev/null &
-    
-    echo "Starting polkitd..."
-    /usr/libexec/polkitd &>/dev/null &
+    echo "Starting system services..."
+    [ -x /usr/libexec/colord ] && /usr/libexec/colord &>/dev/null &
+    [ -x /usr/lib/colord/colord ] && /usr/lib/colord/colord &>/dev/null &
+    [ -x /usr/libexec/accounts-daemon ] && /usr/libexec/accounts-daemon &>/dev/null &
+    [ -x /usr/lib/accountsservice/accounts-daemon ] && /usr/lib/accountsservice/accounts-daemon &>/dev/null &
+    [ -x /usr/libexec/upowerd ] && /usr/libexec/upowerd &>/dev/null &
+    [ -x /usr/lib/upower/upowerd ] && /usr/lib/upower/upowerd &>/dev/null &
+    [ -x /usr/libexec/polkitd ] && /usr/libexec/polkitd &>/dev/null &
+    [ -x /usr/lib/polkit-1/polkitd ] && /usr/lib/polkit-1/polkitd &>/dev/null &
     
     sleep 2
-    
-    # Register a session with elogind
-    echo "Registering elogind session..."
-    loginctl enable-linger nyarch 2>/dev/null || true
     
     # Switch to nyarch user
     echo "Switching to nyarch user..."
@@ -85,7 +105,6 @@ fi
 # --- Now running as nyarch ---
 echo "Running as: $(whoami) (UID: $(id -u))"
 
-# Export environment
 export HOME=/config
 export DISPLAY=:1
 export XDG_RUNTIME_DIR=/run/user/1000
@@ -102,7 +121,7 @@ export GSK_RENDERER=cairo
 export NO_AT_BRIDGE=1
 export SHELL=/bin/bash
 
-# Clean stale X locks
+# Clean stale locks
 rm -f /tmp/.X1-lock /tmp/.X11-unix/X1 2>/dev/null || true
 
 echo "--- STARTING SESSION DBUS ---"
@@ -113,14 +132,11 @@ dbus-daemon --session --address="unix:path=$DBUS_SOCKET" --fork --print-pid
 export DBUS_SESSION_BUS_ADDRESS="unix:path=$DBUS_SOCKET"
 echo "Session DBUS: $DBUS_SESSION_BUS_ADDRESS"
 
-# Save for other processes
 echo "export DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" > /run/user/1000/dbus-env
 chmod 644 /run/user/1000/dbus-env
 
 echo "--- STARTING GNOME KEYRING ---"
 eval $(gnome-keyring-daemon --start --components=secrets,ssh,pkcs11 2>/dev/null) || true
-export GNOME_KEYRING_CONTROL
-export SSH_AUTH_SOCK
 
 echo "--- DOWNLOADING NYARCH FILES ---"
 cd /tmp
@@ -142,63 +158,26 @@ fi
 
 echo "--- INSTALLING NYARCH CUSTOMIZATIONS ---"
 
-# Copy extensions
-if [ -d "/tmp/NyarchLinux/Gnome/etc/skel/.local/share/gnome-shell/extensions" ]; then
-    cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.local/share/gnome-shell/extensions/* \
-        /config/.local/share/gnome-shell/extensions/ 2>/dev/null || true
-    chmod -R 755 /config/.local/share/gnome-shell/extensions/
-    echo "Installed GNOME extensions"
-fi
-
 # Copy themes
-if [ -d "/tmp/NyarchLinux/Gnome/etc/skel/.local/share/themes" ]; then
-    cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.local/share/themes/* \
-        /config/.local/share/themes/ 2>/dev/null || true
-    echo "Installed themes"
-fi
+[ -d "/tmp/NyarchLinux/Gnome/etc/skel/.local/share/themes" ] && \
+    cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.local/share/themes/* /config/.local/share/themes/ 2>/dev/null || true
 
 # Copy icons
-if [ -d "/tmp/NyarchLinux/Gnome/etc/skel/.local/share/icons" ]; then
-    cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.local/share/icons/* \
-        /config/.local/share/icons/ 2>/dev/null || true
-    echo "Installed icons"
-fi
+[ -d "/tmp/NyarchLinux/Gnome/etc/skel/.local/share/icons" ] && \
+    cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.local/share/icons/* /config/.local/share/icons/ 2>/dev/null || true
 
 # Copy GTK configs
 cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.config/gtk-3.0 /config/.config/ 2>/dev/null || true
 cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.config/gtk-4.0 /config/.config/ 2>/dev/null || true
 
-echo "--- INSTALLING MATERIAL-YOU-COLORS ---"
-cd /tmp
-if [ ! -d "/tmp/material-you-colors" ]; then
-    git clone https://github.com/FrancescoCaracciolo/material-you-colors.git 2>/dev/null || true
-fi
-
-if [ -d "/tmp/material-you-colors" ]; then
-    cd /tmp/material-you-colors
-    make build 2>/dev/null || true
-    make install 2>/dev/null || true
-    
-    MYCOLORS_DIR="$HOME/.local/share/gnome-shell/extensions/material-you-colors@francescocaracciolo.github.io"
-    if [ -d "$MYCOLORS_DIR" ] && [ -f "$MYCOLORS_DIR/package.json" ]; then
-        cd "$MYCOLORS_DIR"
-        npm install 2>/dev/null || true
-        echo "Installed Material-You-Colors"
-    fi
-fi
+# Skip extensions for now - enable after shell is stable
+echo "--- SKIPPING EXTENSIONS FOR STABILITY ---"
 
 echo "--- APPLYING DCONF SETTINGS ---"
 dconf write /org/gnome/desktop/interface/color-scheme "'prefer-dark'" 2>/dev/null || true
 dconf write /org/gnome/desktop/interface/gtk-theme "'Adwaita-dark'" 2>/dev/null || true
 dconf write /org/gnome/desktop/wm/preferences/button-layout "'appmenu:minimize,maximize,close'" 2>/dev/null || true
-
-if [ -d "/tmp/NyarchLinux/Gnome/etc/dconf/db/local.d" ]; then
-    cd /tmp/NyarchLinux/Gnome/etc/dconf/db/local.d
-    for conf in 02-interface 03-background 04-wmpreferences 06-extensions; do
-        [ -f "$conf" ] && dconf load / < "$conf" 2>/dev/null || true
-    done
-    echo "Applied dconf settings"
-fi
+dconf write /org/gnome/shell/disable-user-extensions true 2>/dev/null || true
 
 echo "--- STARTING VNC SERVER ---"
 Xtigervnc :1 \
@@ -230,16 +209,14 @@ fi
 
 echo "--- STARTING GNOME SERVICES ---"
 
-# Start accessibility
-DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" /usr/libexec/at-spi-bus-launcher --launch-immediately &>/dev/null &
-DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" /usr/libexec/at-spi2-registryd &>/dev/null &
-
 # Start gvfs
-DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" /usr/libexec/gvfsd &>/dev/null &
+for gvfsd in /usr/libexec/gvfsd /usr/lib/gvfs/gvfsd; do
+    [ -x "$gvfsd" ] && DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" "$gvfsd" &>/dev/null &
+done
 
 # Start settings daemons
 echo "Starting GNOME settings daemons..."
-for gsd in /usr/libexec/gsd-*; do
+for gsd in /usr/libexec/gsd-* /usr/lib/gnome-settings-daemon/gsd-*; do
     if [ -x "$gsd" ]; then
         DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
         DISPLAY=:1 \
@@ -253,7 +230,13 @@ sleep 3
 echo "--- STARTING GNOME SHELL ---"
 echo "DBUS: $DBUS_SESSION_BUS_ADDRESS"
 
-# Use gnome-session to properly start the shell
+# Check if login1 is available before starting
+if busctl --system list 2>/dev/null | grep -q "org.freedesktop.login1"; then
+    echo "login1 service available - starting gnome-shell"
+else
+    echo "WARNING: login1 not available - gnome-shell may crash"
+fi
+
 DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
 DISPLAY=:1 \
 XDG_RUNTIME_DIR=/run/user/1000 \
@@ -262,7 +245,7 @@ XDG_SESSION_TYPE=x11 \
 XDG_SESSION_DESKTOP=gnome \
 LIBGL_ALWAYS_SOFTWARE=1 \
 GSK_RENDERER=cairo \
-gnome-session --session=gnome 2>&1 &
+gnome-shell --x11 2>&1 &
 
 GNOME_PID=$!
 
@@ -271,33 +254,17 @@ sleep 8
 if pgrep -x gnome-shell > /dev/null; then
     echo "GNOME Shell running!"
 else
-    echo "Trying direct gnome-shell..."
+    echo "GNOME Shell failed, using mutter fallback..."
     
     DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
     DISPLAY=:1 \
-    XDG_RUNTIME_DIR=/run/user/1000 \
-    gnome-shell --x11 2>&1 &
-    
-    sleep 5
-fi
-
-if ! pgrep -x gnome-shell > /dev/null; then
-    echo "Starting mutter + nautilus fallback..."
-    
-    DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
-    DISPLAY=:1 \
-    mutter --x11 --replace 2>&1 &
+    mutter --x11 2>&1 &
     
     sleep 2
     
     DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
     DISPLAY=:1 \
-    nautilus --new-window /config &>/dev/null &
-    
-    # Add a panel alternative
-    DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
-    DISPLAY=:1 \
-    gnome-control-center &>/dev/null &
+    nautilus /config &>/dev/null &
 fi
 
 echo "--- STARTING NOVNC ---"
@@ -309,7 +276,6 @@ echo ""
 echo "=============================================="
 echo "  NYARCH LINUX READY"
 echo "  GNOME: $GNOME_VER"
-echo "  DBUS: $DBUS_SESSION_BUS_ADDRESS"
 echo "=============================================="
 echo "  Web Access: port 7860"
 echo "=============================================="
@@ -331,7 +297,7 @@ while true; do
         DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
         DISPLAY=:1 \
         gnome-shell --x11 2>&1 &
-        sleep 5
+        sleep 8
     fi
     
     sleep 10
