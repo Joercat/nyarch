@@ -16,34 +16,19 @@ if [ "$(id -u)" = "0" ]; then
     dbus-daemon --system --fork --nopidfile
     sleep 2
     
-    # Start elogind
-    echo "[ROOT] Starting elogind..."
-    ELOGIND_BIN=$(cat /etc/elogind.path 2>/dev/null)
-    
-    if [ -z "$ELOGIND_BIN" ] || [ ! -x "$ELOGIND_BIN" ]; then
-        # Try common paths
-        for p in /lib/elogind/elogind /usr/lib/elogind/elogind /usr/libexec/elogind; do
-            if [ -x "$p" ]; then
-                ELOGIND_BIN="$p"
-                break
-            fi
-        done
+    # Start elogind using init script
+    echo "[ROOT] Starting elogind via init script..."
+    if [ -x /etc/init.d/elogind ]; then
+        /etc/init.d/elogind start
+        sleep 3
     fi
     
-    if [ -x "$ELOGIND_BIN" ]; then
-        echo "[ROOT] Found elogind: $ELOGIND_BIN"
-        "$ELOGIND_BIN" --daemon 2>/dev/null &
-        sleep 3
-        
-        # Check if running
-        if busctl --system list 2>/dev/null | grep -q login1; then
-            echo "[ROOT] elogind running - login1 available!"
-        else
-            echo "[ROOT] WARNING: elogind started but login1 not responding"
-        fi
+    # Verify login1 is available
+    if busctl --system list 2>/dev/null | grep -q login1; then
+        echo "[ROOT] SUCCESS: login1 service available!"
     else
-        echo "[ROOT] ERROR: elogind not found!"
-        find / -name "*elogind*" -type f 2>/dev/null | head -5
+        echo "[ROOT] WARNING: login1 not available, checking..."
+        busctl --system list 2>/dev/null | head -10
     fi
     
     # Start other services
@@ -135,7 +120,7 @@ if ! xdpyinfo -display :1 >/dev/null 2>&1; then
 fi
 echo "[USER] VNC ready!"
 
-# Start gnome-shell directly (skip gnome-session)
+# Start gnome-shell directly
 echo "[USER] Starting GNOME Shell..."
 DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
 DISPLAY=:1 \
